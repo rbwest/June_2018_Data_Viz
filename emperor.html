@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<!-- Import D3.js -->
+	<script type="text/javascript" src="https://d3js.org/d3.v5.min.js"></script>
+
+	<!-- Import jQuery -->
+	<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+</head>
+<body>
+<style type="text/css">
+	html, body, svg {
+		overflow: hidden;
+		margin: 0px;
+	}
+
+	text {
+		font-family: "Verdana";
+	}
+
+	.axis-title {
+		font-size: 1em;
+	}
+
+	.tick text, .era-label, .dynasty-label, .key-text, .legend-text, .legend-title {
+		font-size: .75em;
+	}
+
+	.title {
+
+	}
+
+	.sub-title {
+
+	}
+
+	.key-text {
+		text-anchor: middle;
+		alignment-baseline: ideographic;
+	}
+
+	/* SELECTIONS */
+	.selectable {
+		cursor: pointer;
+	}
+
+	.era-group.selected .era-label, .dynasty-group.selected .dynasty-label, .legend-group.selected .legend-text, .y-axis .tick text.selected {
+		font-weight: bold;
+	}
+
+	.era-group.selected .era-line, .dynasty-group.selected .dynasty-line, .legend-group.selected .legend-circle {
+		stroke-width: 2px;
+	}
+
+	.era-group.selected .era-line, .dynasty-group.selected .dynasty-line {
+		stroke: black;
+	}
+
+
+</style>
+
+<svg id="emperors"></svg>
+
+<script>
+	"use strict";
+	/*************************************************** Declare global variables ***************************************************/
+	// Data variables
+	var ERAS = [];
+	var DYNASTIES = [];
+	var CODS = [];
+	var CODS_MAP = {};
+	var DYN_ERA_MAP = {};
+
+	// Static dimension variables
+	var MARGIN = {top: 10, right: 10, bottom: 10, left: 10};			// Margin on interior edge of SVG
+	var ERA_WIDTH = 80;
+	var DYNASTY_WIDTH = 115;
+	var Y_AXIS_WIDTH = 100;
+	var TITLE_HEIGHT = 24;
+	var SUB_TITLE_HEIGHT = 16;
+	var KEY_HEIGHT = 40;
+	var LEGEND_HEIGHT = 50;
+	var X_AXIS_HEIGHT = 20;
+	var X_AXIS_LABEL_HEIGHT = 20;
+	var Y_TITLE_PAD = -10;
+	var LEGEND_SMALL_PAD = 1;
+	var LEGEND_LARGE_PAD = 15;
+
+	// Dynamic dimension variables
+	var WIDTH = window.innerWidth;										// Width of SVG element
+	var HEIGHT = window.innerHeight;									// Height of SVG element
+	var DRAWABLE_WIDTH = WIDTH - MARGIN.right - MARGIN.left;			// Drawable width of SVG
+	var DRAWABLE_HEIGHT = HEIGHT - MARGIN.bottom - MARGIN.top;			// Drawable height of SVG
+	var CHART_WIDTH = DRAWABLE_WIDTH - ERA_WIDTH - DYNASTY_WIDTH - Y_AXIS_WIDTH;
+	var LEGEND_WIDTH = 0;
+	var LEGEND_CUM_WIDTHS = [];
+	var LEGEND_TITLE_WIDTH;
+
+	// Selection and d3 variables
+	var SVG;															// SVG selection
+	var G_ERA;
+	var G_DYNASTY;
+	var G_Y_AXIS;														// Y Axis Group selection
+	var G_TITLE;
+	var G_SUB_TITLE;
+	var G_KEY;
+	var G_LEGEND;
+	var G_CHART_AREA;													// Chart Area Group selection
+	var G_X_AXIS;
+	var G_X_AXIS_LABEL;
+	var G_SENTENCE;
+
+	var X_SCALE;														// X Scale
+	var Y_SCALE;														// Y Scale
+	var COLOR_SCALE;													// Color scale
+
+	var ERA_GROUPS;
+	var DYNASTY_GROUPS;
+	var LEGEND_GROUPS;
+	var EMP_GROUPS;
+
+	var PARSE_TIME = d3.timeParse("%Y-%m-%d");
+	var FORMAT_YEAR = d3.timeFormat("%-Y");
+
+
+	function PARSE_TIME_BCE(date) {
+		var y = parseInt(date.substring(1, 5));
+		var m = parseInt(date.substring(6, 8));
+		var d = parseInt(date.substring(9));
+		return new Date(-y, m, d);
+	}
+
+
+	/**************************************************** Create Static Elements ****************************************************/
+	// Save reference for svg
+	SVG = d3.select("#emperors")
+	   .attr("width", WIDTH)
+	   .attr("height", HEIGHT)
+	   .on("click", function() { 
+	   		d3.selectAll(".selectable").classed("selected", false); 
+	   		var emp_selection = d3.selectAll(".emperor-group")
+	   			.classed("selected", true);
+
+			emp_selection.selectAll("line")
+				.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+			
+			emp_selection.selectAll("circle")
+				.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+			emp_selection.selectAll(".reign-start-circle")
+				.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+		});
+
+	// Append era group and save reference
+	G_ERA = SVG.append("g")
+		.classed("g-eras", true)
+		.attr("transform", "translate(" + (MARGIN.left) + "," + (MARGIN.top + TITLE_HEIGHT + SUB_TITLE_HEIGHT + KEY_HEIGHT + LEGEND_HEIGHT) + ")");
+
+	// Append dynasty group and save reference
+	G_DYNASTY = SVG.append("g")
+		.classed("g-dynasties", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH) + "," + (MARGIN.top + TITLE_HEIGHT + SUB_TITLE_HEIGHT + KEY_HEIGHT + LEGEND_HEIGHT) + ")");
+
+	// Append y axis group and save reference
+	G_Y_AXIS = SVG.append("g")
+		.classed("g-y-axis", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (MARGIN.top + TITLE_HEIGHT + SUB_TITLE_HEIGHT + KEY_HEIGHT + LEGEND_HEIGHT) + ")");
+
+	// Append title group and save reference
+	G_TITLE = SVG.append("g")
+		.classed("g-title", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (MARGIN.top) + ")");
+
+	// Append sub title group and save reference
+	G_SUB_TITLE = SVG.append("g")
+		.classed("g-sub-title", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (MARGIN.top + TITLE_HEIGHT) + ")");
+
+	// Append key group and save reference
+	G_KEY = SVG.append("g")
+		.classed("g-key", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (MARGIN.top + TITLE_HEIGHT + SUB_TITLE_HEIGHT) + ")");
+
+	// Append legend group and save reference
+	G_LEGEND = SVG.append("g")
+		.classed("g-legend", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (MARGIN.top + TITLE_HEIGHT + SUB_TITLE_HEIGHT + KEY_HEIGHT) + ")");
+
+	// Append chart area group and save reference
+	G_CHART_AREA = SVG.append("g")
+		.classed("g-chart-area", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (MARGIN.top + TITLE_HEIGHT + SUB_TITLE_HEIGHT + KEY_HEIGHT + LEGEND_HEIGHT) + ")");
+
+	// Append x axis group and save reference
+	G_X_AXIS = SVG.append("g")
+		.classed("g-x-axis", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (HEIGHT - MARGIN.bottom - X_AXIS_LABEL_HEIGHT - X_AXIS_HEIGHT) + ")");
+
+	// Append x axis label group and save reference
+	G_X_AXIS_LABEL = SVG.append("g")
+		.classed("g-x-axis-label", true)
+		.attr("transform", "translate(" + (MARGIN.left + ERA_WIDTH + DYNASTY_WIDTH + Y_AXIS_WIDTH) + "," + (HEIGHT - MARGIN.bottom - X_AXIS_LABEL_HEIGHT) + ")");
+
+	/************************************************ Create Data Dependent Elements ************************************************/
+	d3.csv("data.csv", function(d) {
+		if (ERAS.length==0 || ERAS[ERAS.length-1]!=d.era) {
+			ERAS.push(d.era);
+		}
+
+		if (DYNASTIES.length==0 || DYNASTIES[DYNASTIES.length-1]!=d.dynasty) {
+			DYNASTIES.push(d.dynasty);
+			DYN_ERA_MAP[d.dynasty] = d.era;
+		}
+
+		if (!(d.cause in CODS_MAP)) {
+			CODS.push(d.cause);
+			CODS_MAP[d.cause] = 0;
+		}
+
+		return {
+			name: d.name,
+			full_name: d["name.full"],
+			birth_city: d["birth.cty"],
+			birth_prov: d["birth.prv"],
+			era: d.era,
+			dynasty: d.dynasty,
+			rise: d.rise,
+			COD: d.cause, 
+			killer: d.killer,
+			birth: d.birth[0]=="-" ? PARSE_TIME_BCE(d.birth) : PARSE_TIME(d.birth),
+			reign_start: d["reign.start"][0]=="-" ? PARSE_TIME_BCE(d["reign.start"]) : PARSE_TIME(d["reign.start"]),
+			reign_end: PARSE_TIME(d["reign.end"]),
+			death: PARSE_TIME(d.death)
+		};
+	}).then(function(data) {
+		console.log(data);
+		// Sort data by birth
+		data.sort(function(a, b) { return b.reign_start - a.reign_start; });
+
+		// Create y scale
+		Y_SCALE = d3.scaleBand()
+			.range([DRAWABLE_HEIGHT - TITLE_HEIGHT - SUB_TITLE_HEIGHT - KEY_HEIGHT - LEGEND_HEIGHT - X_AXIS_HEIGHT - X_AXIS_LABEL_HEIGHT, 0])
+			.padding(0.3)
+			.domain(data.map(function(d) { return d.name; }));
+
+		// Create x scale
+		X_SCALE = d3.scaleTime()
+			.range([0, DRAWABLE_WIDTH - ERA_WIDTH - DYNASTY_WIDTH - Y_AXIS_WIDTH])
+			.domain([ 
+				d3.min(data, function(d) { return d.birth ? d.birth : d.reign_start; }), 
+				d3.max(data, function(d) { return d.death ? d.death : d.reign_end })
+			]);
+
+		// Create color scale
+		COLOR_SCALE = d3.scaleOrdinal(d3.schemeDark2)
+			.domain(data.map(function(d) { return d.COD; }));
+
+		// Create era groups
+		ERA_GROUPS = G_ERA.selectAll(".era-group").data(ERAS).enter().append("g")
+			.classed("era-group", true)
+			.classed("selectable", true)
+			.on("click", function(d) { console.log(d); select("era", this, d); });
+
+		ERA_GROUPS.append("line")
+			.classed("era-line", true)
+			.attr("id", function(d) { return d + "-line"; })
+			.attr("x1", (ERA_WIDTH))
+			.attr("x2", (ERA_WIDTH))
+			.attr("y1", function(d) { 
+				var first;
+				for (var i=0, length=data.length; i<length; i++) {
+					if (data[i].era == d) {
+						first = data[i].name;
+						break;
+					}
+				}
+
+				return Y_SCALE(first) + Y_SCALE.bandwidth()/4; 
+			})
+			.attr("y2", function(d) { 
+				var first;
+				for (var i=0, length=data.length; i<length; i++) {
+					if (data[i].era == d) {
+						var last;
+						while (i<length && data[i].era == d) {
+							i++;
+						}
+						last = data[i-1].name;
+						break;
+					}
+				}
+
+				return Y_SCALE(last) + 3*Y_SCALE.bandwidth()/4; 
+			})
+			.attr("stroke-width", 1)
+			.attr("stroke", "#C4C4C4");
+
+		ERA_GROUPS.append("text")
+			.classed("era-label", true)
+			.attr("text-anchor", "end")
+			.attr("alignment-baseline", "middle")
+			.attr("transform", function(d) {
+				var line = d3.select("#" + d + "-line");
+				var y = parseInt(line.attr("y2")) + (line.attr("y1") - line.attr("y2"))/2;
+				return "translate(" + (ERA_WIDTH - 5) + ", " + (y) + ")";
+			})
+			.text(function(d) { return d; });
+
+		// Create era label
+		G_ERA.append("text")
+			.classed("axis-title", true)
+			.attr("text-anchor", "end")
+			.attr("alignment-baseline", "ideographic")
+			.attr("x", (ERA_WIDTH))
+			.attr("y", (Y_TITLE_PAD))
+			.text("Era");
+
+
+		// Create dynasty groups
+		DYNASTY_GROUPS = G_DYNASTY.selectAll(".dynasty-group").data(DYNASTIES).enter().append("g")
+			.classed("dynasty-group", true)
+			.classed("selectable", true)
+			.on("click", function(d) { console.log(d); select("dynasty", this, d); });
+
+		DYNASTY_GROUPS.append("line")
+			.classed("dynasty-line", true)
+			.attr("id", function(d) { return d + "-line"; })
+			.attr("x1", (DYNASTY_WIDTH))
+			.attr("x2", (DYNASTY_WIDTH))
+			.attr("y1", function(d) { 
+				var first;
+				for (var i=0, length=data.length; i<length; i++) {
+					if (data[i].dynasty == d) {
+						first = data[i].name;
+						break;
+					}
+				}
+
+				return Y_SCALE(first) + Y_SCALE.bandwidth()/4; 
+			})
+			.attr("y2", function(d) { 
+				var first;
+				for (var i=0, length=data.length; i<length; i++) {
+					if (data[i].dynasty == d) {
+						var last;
+						while (i<length && data[i].dynasty == d) {
+							i++;
+						}
+						last = data[i-1].name;
+						break;
+					}
+				}
+
+				return Y_SCALE(last) + 3*Y_SCALE.bandwidth()/4; 
+			})
+			.attr("stroke-width", 1)
+			.attr("stroke", "#C4C4C4");
+
+		DYNASTY_GROUPS.append("text")
+			.classed("dynasty-label", true)
+			.attr("text-anchor", "end")
+			.attr("alignment-baseline", "middle")
+			.attr("transform", function(d) {
+				var line = d3.select("#" + d + "-line");
+				var y = parseInt(line.attr("y2")) + (line.attr("y1") - line.attr("y2"))/2;
+				return "translate(" + (DYNASTY_WIDTH - 5) + ", " + (y) + ")";
+			})
+			.text(function(d) { return d; });
+
+		// Create dynasty label
+		G_DYNASTY.append("text")
+			.classed("axis-title", true)
+			.attr("text-anchor", "end")
+			.attr("alignment-baseline", "ideographic")
+			.attr("x", (DYNASTY_WIDTH))
+			.attr("y", (Y_TITLE_PAD))
+			.text("Dynasty");
+
+		// Create y axis
+		G_Y_AXIS.append("g")
+			.classed("y-axis", true)
+			.call(d3.axisLeft(Y_SCALE)
+				.tickSize(0)
+			);
+
+		// Add event listner to y axis text
+		d3.selectAll(".y-axis .tick text").data(data)
+			.classed("selectable", true)
+			.on("click", function(d) { console.log(d); select("name", this, d); });
+
+		// Create y axis label
+		G_Y_AXIS.append("text")
+			.classed("axis-title", true)
+			.attr("text-anchor", "end")
+			.attr("alignment-baseline", "ideographic")
+			.attr("x", 0)
+			.attr("y", (Y_TITLE_PAD))
+			.text("Emperor");
+
+		// Create title
+		G_TITLE.append("text")
+			.classed("title", true)
+			.attr("text-anchor", "middle")
+			.attr("alignment-baseline", "hanging")
+			.attr("x", (CHART_WIDTH/2))
+			.attr("y", 0)
+			.text("Rise & Fall of Roman Emperors from 26 BCE to 395 AD")
+			.style("font-size", function() {
+				var widthConstrained = CHART_WIDTH / this.getComputedTextLength();
+				var heightConstrained = TITLE_HEIGHT / this.getBBox().height;
+				return Math.min(widthConstrained, heightConstrained) + "em";
+			});
+
+		// Create sub title
+		G_SUB_TITLE.append("text")
+			.classed("sub-title", true)
+			.attr("text-anchor", "middle")
+			.attr("alignment-baseline", "hanging")
+			.attr("x", (CHART_WIDTH/2))
+			.attr("y", 0)
+			.text("June 2018 DataViz Battle Submission by rybwes")
+			.style("font-size", function() {
+				var widthConstrained = CHART_WIDTH / this.getComputedTextLength();
+				var heightConstrained = SUB_TITLE_HEIGHT / this.getBBox().height;
+				return Math.min(widthConstrained, heightConstrained) + "em";
+			});
+
+		// Create key
+		G_KEY.append("line")
+			.classed("key-life-line", true)
+			.attr("x1", (14*CHART_WIDTH/32))
+			.attr("x2", (18*CHART_WIDTH/32))
+			.attr("y1", (KEY_HEIGHT))
+			.attr("y2", (KEY_HEIGHT))
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(data[0].COD); });
+
+		G_KEY.append("line")
+			.classed("key-birth-line", true)
+			.attr("x1", (14*CHART_WIDTH/32))
+			.attr("x2", (14*CHART_WIDTH/32))
+			.attr("y1", (KEY_HEIGHT - Y_SCALE.bandwidth()/2))
+			.attr("y2", (KEY_HEIGHT + Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(data[0].COD); });
+
+		G_KEY.append("text")
+			.classed("key-text", true)
+			.attr("x", (14*CHART_WIDTH/32))
+			.attr("y", (KEY_HEIGHT - Y_SCALE.bandwidth()))
+			.text("Birth");
+
+		G_KEY.append("circle")
+			.classed("key-reign-start-circle", true)
+			.attr("cx", (15*CHART_WIDTH/32))
+			.attr("cy", (KEY_HEIGHT))
+			.attr("r", (Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 1)
+			.attr("stroke", function(d) { return COLOR_SCALE(data[0].COD); })
+			.attr("fill", function(d) { return COLOR_SCALE(data[0].COD); });
+
+		G_KEY.append("text")
+			.classed("key-text", true)
+			.attr("x", (15*CHART_WIDTH/32))
+			.text("Reign")
+			.attr("y", function() { return (KEY_HEIGHT - Y_SCALE.bandwidth() - this.getBBox().height); });
+
+		G_KEY.append("text")
+			.classed("key-text", true)
+			.attr("x", (15*CHART_WIDTH/32))
+			.attr("y", (KEY_HEIGHT - Y_SCALE.bandwidth()))
+			.text("Start");
+
+		G_KEY.append("circle")
+			.classed("key-reign-end-circle", true)
+			.attr("cx", (17*CHART_WIDTH/32))
+			.attr("cy", (KEY_HEIGHT))
+			.attr("r", (Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 1)
+			.attr("stroke", function(d) { return COLOR_SCALE(data[0].COD); })
+			.attr("fill", "none");
+
+		G_KEY.append("text")
+			.classed("key-text", true)
+			.attr("x", (17*CHART_WIDTH/32))
+			.text("Reign")
+			.attr("y", function() { return (KEY_HEIGHT - Y_SCALE.bandwidth() - this.getBBox().height); });
+
+		G_KEY.append("text")
+			.classed("key-text", true)
+			.attr("x", (17*CHART_WIDTH/32))
+			.attr("y", (KEY_HEIGHT - Y_SCALE.bandwidth()))
+			.text("End");
+
+		G_KEY.append("line")
+			.classed("key-death-x", true)
+			.attr("x1", (18*CHART_WIDTH/32 - Y_SCALE.bandwidth()/2))
+			.attr("x2", (18*CHART_WIDTH/32 + Y_SCALE.bandwidth()/2))
+			.attr("y1", (KEY_HEIGHT - Y_SCALE.bandwidth()/2))
+			.attr("y2", (KEY_HEIGHT + Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(data[0].COD); });
+
+		G_KEY.append("line")
+			.classed("key-death-x", true)
+			.attr("x1", (18*CHART_WIDTH/32 - Y_SCALE.bandwidth()/2))
+			.attr("x2", (18*CHART_WIDTH/32 + Y_SCALE.bandwidth()/2))
+			.attr("y1", (KEY_HEIGHT + Y_SCALE.bandwidth()/2))
+			.attr("y2", (KEY_HEIGHT - Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(data[0].COD); });
+
+		G_KEY.append("text")
+			.classed("key-text", true)
+			.attr("x", (18*CHART_WIDTH/32))
+			.attr("y", (KEY_HEIGHT - Y_SCALE.bandwidth()))
+			.text("Death");
+
+		// Create legend
+		G_LEGEND.selectAll(".legend-title").data([CODS]).enter().append("text")
+			.classed("legend-title", true)
+			.text("Causes of Death:")
+			.each(function() {
+				LEGEND_WIDTH += this.getComputedTextLength() + LEGEND_LARGE_PAD;
+				LEGEND_CUM_WIDTHS.push(LEGEND_WIDTH);
+				this.remove();
+			});
+
+		G_LEGEND.selectAll(".legend-text").data(CODS).enter().append("text")
+			.classed("legend-text", true)
+			.text(function(d) { return d; })
+			.style("font-weight", "bold")
+			.each(function() {
+				LEGEND_WIDTH += Y_SCALE.bandwidth() + LEGEND_SMALL_PAD + this.getComputedTextLength() + LEGEND_LARGE_PAD;
+				LEGEND_CUM_WIDTHS.push(LEGEND_WIDTH)
+				this.remove();
+			});
+
+		G_LEGEND.append("text")
+			.classed("legend-title", true)
+			.attr("text-anchor", "start")
+			.attr("alignment-baseline", "middle")
+			.attr("x", ((CHART_WIDTH-LEGEND_WIDTH)/2))
+			.attr("y", (LEGEND_HEIGHT/2))
+			.text("Causes of Death:");
+
+		LEGEND_GROUPS = G_LEGEND.selectAll(".legend-group").data(CODS).enter().append("g")
+			.classed("legend-group", true)
+			.classed("selectable", true)
+			.on("click", function(d) { console.log(d); select("COD", this, d); });
+
+		LEGEND_GROUPS.append("circle")
+			.classed("legend-circle", true)
+			.attr("cx", function(d, i) { return (CHART_WIDTH-LEGEND_WIDTH)/2 + LEGEND_CUM_WIDTHS[i]; })
+			.attr("cy", (LEGEND_HEIGHT/2 - Y_SCALE.bandwidth()/4))
+			.attr("r", (Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 1)
+			.attr("stroke", function(d) { return COLOR_SCALE(d); })
+			.attr("fill", function(d) { return COLOR_SCALE(d); });
+
+		LEGEND_GROUPS.append("text")
+			.classed("legend-text", true)
+			.attr("text-anchor", "start")
+			.attr("alignment-baseline", "middle")
+			.attr("x", function(d, i) { return (CHART_WIDTH-LEGEND_WIDTH)/2 + LEGEND_CUM_WIDTHS[i] + Y_SCALE.bandwidth() + LEGEND_SMALL_PAD; })
+			.attr("y", (LEGEND_HEIGHT/2))
+			.text(function(d) { return d; });
+
+		// Create x axis
+		G_X_AXIS.append("g")
+			.classed("x-axis", true)
+			.call(d3.axisBottom(X_SCALE)
+				.tickFormat(FORMAT_YEAR)
+				.tickSizeOuter(0)
+			);
+
+		// Create x axis label
+		G_X_AXIS_LABEL.append("text")
+			.classed("axis-title", true)
+			.attr("text-anchor", "middle")
+			.attr("alignment-baseline", "hanging")
+			.attr("x", (CHART_WIDTH/2))
+			.attr("y", 0)
+			.text("Year with BCE as Negative");
+
+		// Create grid lines
+		G_CHART_AREA.selectAll(".grid-line").data(data).enter().append("line")
+			.classed("grid-line", true)
+			.attr("x1", 1)
+			.attr("x2", CHART_WIDTH)
+			.attr("y1", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth()/2; })
+			.attr("y2", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth()/2; })
+			.attr("stroke-width", 1)
+			.attr("stroke", "#F4F4F4");
+
+		// Create emperor groups
+		EMP_GROUPS = G_CHART_AREA.selectAll(".emperor-group").data(data).enter().append("g")
+			.classed("emperor-group", true)
+			.classed("selectable", true)
+			.classed("selected", true)
+			.on("click", function(d) { console.log(d); select("emperor", this, d); });
+
+		// Create life lines in emperor groups
+		EMP_GROUPS.append("line")
+			.classed("life-line", true)
+			.attr("x1", function(d) { return d.birth ? X_SCALE(d.birth) : X_SCALE(d.reign_start); })
+			.attr("x2", function(d) { return X_SCALE(d.death); })
+			.attr("y1", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth()/2; })
+			.attr("y2", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth()/2; })
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+		// Create birth lines in emperor groups
+		EMP_GROUPS.append("line")
+			.classed("birth-line", true)
+		.filter(function(d) { return d.birth; })
+			.attr("x1", function(d) { return X_SCALE(d.birth); })
+			.attr("x2", function(d) { return X_SCALE(d.birth); })
+			.attr("y1", function(d) { return Y_SCALE(d.name); })
+			.attr("y2", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth(); })
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+		// Create reign start circles in emperor groups
+		EMP_GROUPS.append("circle")
+			.classed("reign-start-circle", true)
+			.attr("cx", function(d) { return X_SCALE(d.reign_start); })
+			.attr("cy", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth()/2; })
+			.attr("r", (Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 1)
+			.attr("stroke", function(d) { return COLOR_SCALE(d.COD); })
+			.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+
+		// Create reign end circles in emperor groups
+		EMP_GROUPS.append("circle")
+			.classed("reign-end-circle", true)
+			.attr("cx", function(d) { return X_SCALE(d.reign_end); })
+			.attr("cy", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth()/2; })
+			.attr("r", (Y_SCALE.bandwidth()/2))
+			.attr("stroke-width", 1)
+			.attr("stroke", function(d) { return COLOR_SCALE(d.COD); })
+			.attr("fill", "none");
+
+		// Create death Xs in emperor groups
+		EMP_GROUPS.append("line")
+			.classed("death-x", true)
+			.attr("x1", function(d) { return X_SCALE(d.death) - Y_SCALE.bandwidth()/2; })
+			.attr("x2", function(d) { return X_SCALE(d.death) + Y_SCALE.bandwidth()/2; })
+			.attr("y1", function(d) { return Y_SCALE(d.name); })
+			.attr("y2", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth(); })
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+		EMP_GROUPS.append("line")
+			.classed("death-x", true)
+			.attr("x1", function(d) { return X_SCALE(d.death) - Y_SCALE.bandwidth()/2; })
+			.attr("x2", function(d) { return X_SCALE(d.death) + Y_SCALE.bandwidth()/2; })
+			.attr("y1", function(d) { return Y_SCALE(d.name) + Y_SCALE.bandwidth(); })
+			.attr("y2", function(d) { return Y_SCALE(d.name); })
+			.attr("stroke-width", 2)
+			.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+		function select(el_type, el, datum) {
+			var emp_selection;
+			var name_selection;
+			var dyn_selection;
+			var el_selection = d3.select(el);
+
+			// Prevent event fall through
+			d3.event.stopPropagation();
+
+			// Remove all selections if cntl not held
+			if (!d3.event.ctrlKey) {
+				d3.selectAll(".selectable").classed("selected", false);
+
+				d3.selectAll(".emperor-group").selectAll("line")
+					.attr("stroke", "#F4F4F4");
+
+				d3.selectAll(".emperor-group").selectAll("circle")
+					.attr("stroke", "#F4F4F4")
+
+				d3.selectAll(".emperor-group").selectAll(".reign-start-circle")
+					.attr("fill", "#F4F4F4");
+			}
+
+			if (el_type=="emperor") {
+				// Select appropriate emperors group elements (self)
+				el_selection.classed("selected", true);
+
+				el_selection.selectAll("line")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+				el_selection.selectAll("circle")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+				emp_selection.selectAll("reign-start-circle")
+					.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+
+				// Select appropriate y-axis elements by name
+				name_selection = d3.selectAll(".y-axis .tick text")
+					.filter(function(d) { return d.name==datum.name; })
+					.classed("selected", true);
+			}
+			else if (el_type=="name") {
+				// Select self
+				el_selection.classed("selected", true);
+				
+				// Select appropriate emperors group elements
+				emp_selection = d3.selectAll(".emperor-group")
+					.filter(function(d) { return d.name==datum.name; })
+					.classed("selected", true);
+
+				emp_selection.selectAll("line")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+				
+				emp_selection.selectAll("circle")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+				emp_selection.selectAll(".reign-start-circle")
+					.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+			}
+			else if (el_type=="era") {
+				// Select self
+				el_selection.classed("selected", true);
+
+				// Select appropriate dynasties
+				dyn_selection = d3.selectAll(".dynasty-group")
+					.filter(function(d) { return DYN_ERA_MAP[d]==datum; })
+					.classed("selected", true);
+				
+				// Select appropriate emperors group elements
+				emp_selection = d3.selectAll(".emperor-group")
+					.filter(function(d) { return d.era==datum; })
+					.classed("selected", true);
+
+				emp_selection.selectAll("line")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+				
+				emp_selection.selectAll("circle")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+				emp_selection.selectAll(".reign-start-circle")
+					.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+
+				// Select appropriate y-axis elements by name
+				name_selection = d3.selectAll(".y-axis .tick text")
+					.filter(function(d) { return d.era==datum; })
+					.classed("selected", true);
+			}
+			else if (el_type=="dynasty") {
+				// Select self
+				el_selection.classed("selected", true);
+				
+				// Select appropriate emperors group elements
+				emp_selection = d3.selectAll(".emperor-group")
+					.filter(function(d) { return d.dynasty==datum; })
+					.classed("selected", true);
+
+				emp_selection.selectAll("line")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+				
+				emp_selection.selectAll("circle")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+				emp_selection.selectAll(".reign-start-circle")
+					.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+
+				// Select appropriate y-axis elements by name
+				name_selection = d3.selectAll(".y-axis .tick text")
+					.filter(function(d) { return d.dynasty==datum; })
+					.classed("selected", true);
+				
+			}
+			else if (el_type=="COD") {
+				// Select self
+				el_selection.classed("selected", true);
+
+				// Select appropriate emperors group elements
+				emp_selection = d3.selectAll(".emperor-group")
+					.filter(function(d) { return d.COD==datum; })
+					.classed("selected", true);
+
+				emp_selection.selectAll("line")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+				
+				emp_selection.selectAll("circle")
+					.attr("stroke", function(d) { return COLOR_SCALE(d.COD); });
+
+				emp_selection.selectAll(".reign-start-circle")
+					.attr("fill", function(d) { return COLOR_SCALE(d.COD); });
+			}
+
+		}
+	});
+</script>
+</body>
+</html>
